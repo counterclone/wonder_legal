@@ -6,6 +6,10 @@ import pandas as pd
 import streamlit as st
 from docx import Document
 import os
+import time
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.by import By
 
 class ScraperBot:
     
@@ -38,16 +42,48 @@ class ScraperBot:
         
         return links
     
-    def getData(self,links):
-        bot=self.bot
-        data={}
-        
-        for k,v in links.items():
+    def getData(self, links):
+        bot = self.bot
+        wait = WebDriverWait(bot, 10) 
+        data = {}
+        #links=dict(list(links.items())[:2])
+
+        for k, v in links.items():
             bot.get(v)
-            soup = BeautifulSoup(bot.page_source,'html.parser')
-            dat=soup.find('div',{'id':'texte_a_afficher'}).text
-            data[k]=dat
+
+            # Wait until texte_a_afficher is present (main content loaded)
+            wait.until(EC.presence_of_element_located((By.ID, 'texte_a_afficher')))
+
+            soup = BeautifulSoup(bot.page_source, 'html.parser')
+            dat = soup.find('div', {'id': 'texte_a_afficher'}).text
+            data[k] = [dat]
+
+            questions = []
+
+            while True:
+                
+                soup = BeautifulSoup(bot.page_source, 'html.parser')
+                ques = soup.find_all('label', {'class': 'label_question'})
+                for q in ques:
+                    questions.append(q.text)
+
+                try:
+                    
+                    button = wait.until(
+                        EC.element_to_be_clickable((By.NAME, 'suivant'))
+                    )
+                    button.click()
+                    
+                    wait.until(EC.staleness_of(button))
+                    
+                except:
+                    
+                    break
+            quest = "\n".join(f"{i+1}. {q}" for i, q in enumerate(questions)) + "\n"
+            data[k].append(quest)
+
         return data
+
     
     def convert_url(self,url):
         return url.replace("/modele/", "/creation-modele/")
@@ -59,6 +95,7 @@ class ScraperBot:
 st.title("Wonder.Legal Scraper")
 
 if st.button("Start Scraping"):
+    start_time=time.time()
     with st.spinner("Scraping in progress..."):
         bot = ScraperBot()
         links = bot.getLinks()
@@ -70,7 +107,8 @@ if st.button("Start Scraping"):
         
         data = bot.getData(word_links)
         bot.close()
-        df = pd.DataFrame(list(data.items()), columns=['Title', 'Description'])
+
+        df = pd.DataFrame([(k, v[0], v[1]) for k, v in data.items()], columns=['Title', 'Description', 'Questions'])
         st.write(df)
         df.to_excel('wonder_legal_data.xlsx', index=False)
         output_folder = "word_files"
@@ -79,9 +117,29 @@ if st.button("Start Scraping"):
         for index, row in df.iterrows():
             title = row['Title']
             description = row['Description']
-            doc = Document()
-            doc.add_paragraph(description)
+            questions = row['Questions']
+
+            # Create a safe folder name
             safe_title = "".join(c if c.isalnum() or c in (' ', '_', '-') else "_" for c in title)
-            file_path = os.path.join(output_folder, f"{safe_title}.docx")
-            doc.save(file_path)
-        st.success(f"Scraping complete! Data saved to `wonder_legal_data.xlsx` and Word files saved in `{output_folder}` folder.")
+            folder_path = os.path.join(output_folder, safe_title)
+            os.makedirs(folder_path, exist_ok=True)
+
+            # Save description.docx
+            desc_doc = Document()
+            desc_doc.add_paragraph(description)
+            desc_path = os.path.join(folder_path, "description.docx")
+            desc_doc.save(desc_path)
+
+            # Save questions.docx
+            ques_doc = Document()
+            if isinstance(questions, list):
+                for q in questions:
+                    ques_doc.add_paragraph(q)
+            else:
+                ques_doc.add_paragraph(str(questions))  
+
+            ques_path = os.path.join(folder_path, "questions.docx")
+            ques_doc.save(ques_path)
+        end_time=time.time()
+        elapsed_time=end_time-start_time
+        st.success(f"PROCESS COMPLETED in {elapsed_time:.2f} seconds")

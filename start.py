@@ -4,7 +4,8 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import pandas as pd
 import streamlit as st
-
+from docx import Document
+import os
 
 class ScraperBot:
     
@@ -44,15 +45,16 @@ class ScraperBot:
         for k,v in links.items():
             bot.get(v)
             soup = BeautifulSoup(bot.page_source,'html.parser')
-            dat=soup.find('div',{'id':'description'}).text
+            dat=soup.find('div',{'id':'texte_a_afficher'}).text
             data[k]=dat
         return data
+    
+    def convert_url(self,url):
+        return url.replace("/modele/", "/creation-modele/")
     
     def close(self):
         print("closed")
         self.bot.quit()
-
-
 
 st.title("Wonder.Legal Scraper")
 
@@ -60,11 +62,26 @@ if st.button("Start Scraping"):
     with st.spinner("Scraping in progress..."):
         bot = ScraperBot()
         links = bot.getLinks()
-        st.success(f"Found {len(links)} links.")
+        word_links={}
+        for k,v in links.items():
+            word_links[k]=bot.convert_url(v)
+
+        st.success(f"Found {len(word_links)} links.")
         
-        data = bot.getData(links)
+        data = bot.getData(word_links)
         bot.close()
         df = pd.DataFrame(list(data.items()), columns=['Title', 'Description'])
         st.write(df)
         df.to_excel('wonder_legal_data.xlsx', index=False)
-        st.success("Scraping complete! Data saved to `wonder_legal_data.xlsx`.")
+        output_folder = "word_files"
+        os.makedirs(output_folder, exist_ok=True)
+
+        for index, row in df.iterrows():
+            title = row['Title']
+            description = row['Description']
+            doc = Document()
+            doc.add_paragraph(description)
+            safe_title = "".join(c if c.isalnum() or c in (' ', '_', '-') else "_" for c in title)
+            file_path = os.path.join(output_folder, f"{safe_title}.docx")
+            doc.save(file_path)
+        st.success(f"Scraping complete! Data saved to `wonder_legal_data.xlsx` and Word files saved in `{output_folder}` folder.")
